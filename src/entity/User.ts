@@ -1,5 +1,5 @@
 import { ObjectId } from "@mikro-orm/mongodb";
-import { Entity, PrimaryKey, Property } from "@mikro-orm/core";
+import { Entity, PrimaryKey, Property, Unique } from "@mikro-orm/core";
 import { Field, ID, ObjectType } from "type-graphql";
 
 @ObjectType()
@@ -19,6 +19,7 @@ export class User {
 
   @Field(() => String)
   @Property({ type: "text" })
+  @Unique()
   username!: string;
 
   @Property({ type: "text" })
