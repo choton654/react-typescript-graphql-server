@@ -11,8 +11,13 @@ import microOrmConfig from "./mikro-orm.config";
 import { PostResolver } from "./resolvers/post";
 import { HelloResolver } from "./resolvers/hello";
 import { UserResolver } from "./resolvers/user";
-import redis = require("redis");
 import session = require("express-session");
+import cors = require("cors");
+import Redis = require("ioredis");
+// import connectRedis = require("connect-redis");
+// const MongoDBStore = require("connect-mongodb-session")(session);
+
+// const MongoStore = connectMongo(session);
 
 export const DI = {} as {
   orm: MikroORM;
@@ -32,34 +37,53 @@ const main = async () => {
   });
 
   const RedisStore = require("connect-redis")(session);
-  const redisClient = redis.createClient();
+  const redis = new Redis();
+  // const redisClient = redis.createClient();
 
   const app = Express();
+
+  // const store = new MongoDBStore({
+  //   uri: "mongodb+srv://choton654:9804750147@cluster0-prdkh.mongodb.net",
+  //   databaseName: "lireddit",
+  //   collection: "mySessions",
+  // });
+
+  // store.on("error", function (error: any) {
+  //   console.log(error);
+  // });
+
+  app.use(
+    cors({
+      origin: "http://localhost:3000",
+      credentials: true,
+    })
+  );
 
   app.use(
     session({
       name: "qid",
-      store: new RedisStore({ client: redisClient }),
+      // store,
+      store: new RedisStore({ client: redis, disableTouch: true }),
       cookie: {
         maxAge: 1000 * 60 * 60 * 24 * 365 * 10,
         httpOnly: true,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
       },
-      saveUninitialized: false,
+      saveUninitialized: true,
       secret: "keyboard cat",
-      resave: false,
+      resave: true,
     })
   );
   const apolloServer = new ApolloServer({
     schema,
-    context: ({ req, res }): MyContext => ({ em: orm.em, req, res }),
+    context: ({ req, res }): MyContext => ({ em: orm.em, req, res, redis }),
   });
 
-  apolloServer.applyMiddleware({ app });
+  apolloServer.applyMiddleware({ app, cors: false });
 
-  app.listen(3000, () => {
-    console.log("server started on http://localhost:3000/graphql");
+  app.listen(4000, () => {
+    console.log("server started on http://localhost:4000/graphql");
   });
 };
 

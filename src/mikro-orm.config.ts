@@ -9,7 +9,7 @@ const options: Options = {
   type: "mongo",
   clientUrl: "mongodb+srv://choton654:9804750147@cluster0-prdkh.mongodb.net",
   debug: process.env.NODE_ENV !== "production",
-  ensureIndexes: true,
+  // ensureIndexes: true,
 };
 
 export default options;
