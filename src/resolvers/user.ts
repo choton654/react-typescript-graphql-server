@@ -1,3 +1,4 @@
+import { isAuth } from "./../middleware/isAuth";
 import { MyContext } from "src/types";
 import { User } from "../entity/User";
 import {
@@ -9,11 +10,11 @@ import {
   ObjectType,
   Query,
   Resolver,
+  UseMiddleware,
 } from "type-graphql";
 import argon2 = require("argon2");
 import { sendEmail } from "../utils/sendemail";
 import { v4 } from "uuid";
-import { ObjectId } from "@mikro-orm/mongodb";
 
 @InputType()
 class UsernamePasswordInput {
@@ -45,20 +46,19 @@ class UserResponse {
 @Resolver()
 export class UserResolver {
   @Query(() => User, { nullable: true })
-  async me(@Ctx() { em, req }: MyContext) {
-    console.log("session", req.session);
+  @UseMiddleware(isAuth)
+  async me(@Ctx() { req }: MyContext) {
+    const user = await User.findOne(req.session.userId);
 
-    if (!req.session.userId) {
-      return null;
-    }
-    const user = await em.findOne(User, { _id: req.session.userId });
+    console.log(user);
+
     return user;
   }
 
   @Mutation(() => UserResponse)
   async register(
     @Arg("options") options: UsernamePasswordInput,
-    @Ctx() { em, req }: MyContext
+    @Ctx() { req }: MyContext
   ): Promise<UserResponse> {
     if (!options.email.includes("@")) {
       return {
@@ -91,13 +91,15 @@ export class UserResolver {
       };
     }
     const hashPassword = await argon2.hash(options.password);
-    const newuser = em.create(User, {
-      username: options.username,
-      password: hashPassword,
-      email: options.email,
-    });
+    let newuser;
     try {
-      await em.persistAndFlush(newuser);
+      newuser = await User.create({
+        username: options.username,
+        password: hashPassword,
+        email: options.email,
+      }).save();
+
+      req.session.userId = newuser.id;
     } catch (error) {
       console.error(error);
       if (error.code === 11000) {
@@ -112,8 +114,6 @@ export class UserResolver {
       }
     }
 
-    req.session.userId = newuser._id;
-
     return { user: newuser };
   }
 
@@ -121,12 +121,14 @@ export class UserResolver {
   async login(
     @Arg("usernameOremail") usernameOremail: string,
     @Arg("password") password: string,
-    @Ctx() { em, req }: MyContext
+    @Ctx() { req }: MyContext
   ): Promise<UserResponse> {
-    const user = await em.findOne(User, {
-      $or: [{ username: usernameOremail }, { email: usernameOremail }],
+    const user = await User.findOne({
+      where: {
+        $or: [{ username: usernameOremail }, { email: usernameOremail }],
+      },
     });
-    console.log(user);
+
     if (!user) {
       return {
         errors: [
@@ -149,7 +151,9 @@ export class UserResolver {
       };
     }
 
-    req.session.userId = user._id;
+    req.session.userId = user.id;
+
+    // console.log(req.session);
 
     return { user };
   }
@@ -157,7 +161,6 @@ export class UserResolver {
   @Mutation(() => Boolean)
   logout(@Ctx() { req, res }: MyContext) {
     return new Promise((resolve) => {
-      console.log("session", req.session);
       req.session.destroy((err) => {
         res.clearCookie("qid", { path: "/" });
         if (err) {
@@ -173,9 +176,9 @@ export class UserResolver {
   @Mutation(() => Boolean)
   async forgetPassword(
     @Arg("email") email: string,
-    @Ctx() { em, redis }: MyContext
+    @Ctx() { redis }: MyContext
   ) {
-    const user = await em.findOne(User, { email });
+    const user = await User.findOne({ where: { email } });
     if (!user) {
       // user not in db
       return true;
@@ -185,7 +188,7 @@ export class UserResolver {
 
     await redis.set(
       "forget-password:" + token,
-      user._id.toString(),
+      user.id.toString(),
       "ex",
       1000 * 60 * 60 * 24 * 3
     ); // 3 days
@@ -202,7 +205,7 @@ export class UserResolver {
   async changePassword(
     @Arg("token") token: string,
     @Arg("password") password: string,
-    @Ctx() { em, req, redis }: MyContext
+    @Ctx() { req, redis }: MyContext
   ): Promise<UserResponse> {
     if (password.length <= 3) {
       return {
@@ -215,8 +218,6 @@ export class UserResolver {
       };
     }
 
-    // const token_array = token.split("-");
-    // const userId = token_array[token_array.length - 1];
     const key = "forget-password:" + token;
     const userId = await redis.get(key);
     if (!userId) {
@@ -230,7 +231,7 @@ export class UserResolver {
       };
     }
 
-    const user = await em.findOne(User, { _id: new ObjectId(userId) });
+    const user = await User.findOne(userId);
 
     if (!user) {
       return {
@@ -245,9 +246,12 @@ export class UserResolver {
     await redis.del(key);
 
     user.password = await argon2.hash(password);
-    em.persistAndFlush(user);
+    await User.update(
+      { id: userId },
+      { password: await argon2.hash(password) }
+    );
 
-    req.session.userId = user._id;
+    req.session.userId = user.id;
     return { user };
   }
 }
